@@ -27,28 +27,29 @@ module Presto.Backend.Runtime.Interpreter
 import Prelude
 
 import Control.Monad.Aff (forkAff)
+import Control.Monad.Eff.Class (liftEff)
 import Control.Monad.Eff.Exception (Error)
-import Control.Monad.Except.Trans (runExceptT) as E
+import Control.Monad.Except.Trans (runExceptT, lift) as E
 import Control.Monad.Free (foldFree)
 import Control.Monad.Reader.Trans (ask, lift, runReaderT) as R
-import Control.Monad.State.Trans (get, modify, put, runStateT) as S
+import Control.Monad.State.Trans (get, modify, put, runStateT, lift) as S
 import Data.Exists (runExists)
-import Data.Tuple (Tuple)
 import Data.Lazy (defer)
+import Data.Tuple (Tuple)
+import Presto.Backend.DB.Mock.Types (DBActionDict)
 import Presto.Backend.Flow (BackendFlow, BackendFlowCommands(..), BackendFlowCommandsWrapper, BackendFlowWrapper(..))
-import Presto.Backend.SystemCommands (runSysCmd)
+import Presto.Backend.Language.Types.DB (SqlConn(..))
 import Presto.Backend.Language.Types.EitherEx (fromEitherEx)
 import Presto.Backend.Language.Types.UnitEx (UnitEx(..))
-import Presto.Backend.Language.Types.DB (SqlConn(..))
-import Presto.Backend.Runtime.Common (lift3, throwException', getDBConn', getKVDBConn')
-import Presto.Backend.Runtime.Types (InterpreterMT, InterpreterMT', BackendRuntime(..))
-import Presto.Backend.Runtime.Types as X
-import Presto.Backend.Playback.Machine.Classless (withRunModeClassless)
 import Presto.Backend.Playback.Entries (mkThrowExceptionEntry)
+import Presto.Backend.Playback.Machine.Classless (withRunModeClassless)
 import Presto.Backend.Playback.Types (mkEntryDict)
 import Presto.Backend.Runtime.API (runAPIInteraction)
+import Presto.Backend.Runtime.Common (lift3, throwException', getDBConn', getKVDBConn')
 import Presto.Backend.Runtime.KVDBInterpreter (runKVDB)
-import Presto.Backend.DB.Mock.Types (DBActionDict)
+import Presto.Backend.Runtime.Types (InterpreterMT, InterpreterMT', BackendRuntime(..))
+import Presto.Backend.Runtime.Types as X
+import Presto.Backend.SystemCommands (runSysCmd)
 
 forkF :: forall eff rt st a. BackendRuntime -> BackendFlow st rt a -> InterpreterMT rt st (Tuple Error st) eff Unit
 forkF brt flow = do
@@ -126,6 +127,8 @@ interpret brt (RunKVDBEither dbName kvDBF mockedKvDbActDictF rrItemDict next) =
 
 interpret brt (RunKVDBSimple dbName kvDBF mockedKvDbActDictF rrItemDict next) =
   next <$> runKVDB brt dbName kvDBF mockedKvDbActDictF rrItemDict
+
+interpret _ (GetDate executorFn next) = (R.lift $ S.lift $ E.lift $ liftEff $ executorFn) >>= (pure <<< next)
 
 runBackend :: forall st rt eff a. BackendRuntime -> BackendFlow st rt a -> InterpreterMT' rt st eff a
 runBackend backendRuntime = foldFree (\(BackendFlowWrapper x) -> runExists (interpret backendRuntime) x)

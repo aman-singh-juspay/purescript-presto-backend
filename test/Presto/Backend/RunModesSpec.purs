@@ -3,6 +3,7 @@ module Presto.Backend.RunModesSpec where
 import Control.Monad.Aff (Aff)
 import Control.Monad.Aff.AVar (AVAR, makeVar, readVar)
 import Control.Monad.Aff.Class (liftAff)
+import Control.Monad.Aff.Console (logShow)
 import Control.Monad.Eff.Exception (error, message)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.Except.Trans (runExceptT)
@@ -10,22 +11,25 @@ import Control.Monad.Reader.Trans (runReaderT)
 import Control.Monad.State.Trans (runStateT)
 import Data.Array (length, index)
 import Data.Either (Either(Left, Right), isRight)
+import Data.Foreign (toForeign)
 import Data.Foreign.Class (class Decode, class Encode)
 import Data.Foreign.Generic (encodeJSON)
+import Data.Function.Uncurried (runFn3)
 import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show as GShow
-import Data.Maybe (Maybe(Nothing, Just))
+import Data.Maybe (Maybe(..))
 import Data.StrMap as StrMap
 import Data.Tuple (Tuple(..))
 import Debug.Trace (spy)
-import Prelude (class Eq, class Show, Unit, bind, discard, pure, show, unit, ($), (*>), (<>), (==))
-import Presto.Backend.Flow (BackendFlow, callAPI, doAffRR, getDBConn, log, runSysCmd, throwException)
+import Prelude (class Eq, class Show, Unit, bind, discard, pure, show, unit, ($), (*>), (<<<), (<>), (=<<), (==))
+import Presto.Backend.Flow (BackendFlow, callAPI, currentDateStringWithoutSpace, currentDateWithOffset, doAffRR, getCurrentDate, getCurrentDateInMillis, getCurrentDateStringWithOffset, getDBConn, getDateStringWithOffset, getDateWithOffset, isAheadOfCurrentDate, isGivenDateAhead, log, runSysCmd, throwException)
 import Presto.Backend.Language.Types.DB (MockedSqlConn(MockedSqlConn), SqlConn(MockedSql))
 import Presto.Backend.Playback.Entries (CallAPIEntry(..), DoAffEntry(..), LogEntry(..), RunSysCmdEntry(..))
 import Presto.Backend.Playback.Types (EntryReplayingMode(..), GlobalReplayingMode(..), PlaybackError(..), PlaybackErrorType(..), RecordingEntry(..))
 import Presto.Backend.Runtime.Interpreter (RunningMode(..), runBackend)
 import Presto.Backend.Runtime.Types (Connection(..), BackendRuntime(..), RunningMode(..), KVDBRuntime(..))
 import Presto.Backend.Types.API (class RestEndpoint, APIResult, Request(..), Headers(..), Response(..), ErrorPayload(..), Method(..), defaultDecodeResponse)
+import Presto.Backend.Types.Date (Date, _stringToDate)
 import Presto.Core.Utils.Encoding (defaultEncode, defaultDecode)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, fail)
@@ -196,6 +200,30 @@ createRecordingBackendRuntimeWithEntryMode entryMode = do
   let brt = mkBackendRuntime kvdbRuntime $ RecordingMode { recordingVar , disableEntries : [] }
   pure $ Tuple brt recordingVar
 
+testGetDateStringWithOffset :: forall st rt. BackendFlow st rt Date
+testGetDateStringWithOffset = do
+  let sampleDate = "2019-07-16T10:56:05Z"
+  val <- case runFn3 _stringToDate Just Nothing (toForeign sampleDate) of
+            Just date -> pure date
+            Nothing -> throwException $ "Couldn't get date for testing. Invalid date! " <> sampleDate
+  getDateStringWithOffset val 5
+
+testIsAheadOfCurrentDate :: forall st rt. BackendFlow st rt Boolean
+testIsAheadOfCurrentDate = do
+  let sampleDate = "2019-07-16T10:56:05Z"
+  val <- case runFn3 _stringToDate Just Nothing (toForeign sampleDate) of
+            Just date -> pure date
+            Nothing -> throwException $ "Couldn't get date for testing. Invalid date! " <> sampleDate
+  isAheadOfCurrentDate val
+
+testIsGivenDateAhead :: forall st rt. BackendFlow st rt Boolean
+testIsGivenDateAhead = do
+  let sampleDate = "2019-07-16T10:56:05Z"
+  val <- case runFn3 _stringToDate Just Nothing (toForeign sampleDate) of
+            Just date -> pure date
+            Nothing -> throwException $ "Couldn't get date for testing. Invalid date! " <> sampleDate
+  currentDate <- getCurrentDate
+  isGivenDateAhead val currentDate
 
 runTests :: Spec _ Unit
 runTests = do
@@ -700,3 +728,77 @@ runTests = do
         eResult2 <- liftAff $ runExceptT (runStateT (runReaderT (runBackend replayingBackendRuntime logAndCallAPIScript') unit) unit)
         curStep  <- readVar stepVar
         curStep `shouldEqual` 4
+
+  describe "Testing Date DSL" do
+    it "Testing getCurrentDate" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt getCurrentDate) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple date _)  -> do
+          _ <- logShow date
+          pure unit
+
+    it "Testing getDateStringWithOffset" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt testGetDateStringWithOffset) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple date _)  -> (show date) `shouldEqual` "2019-07-21T10:56:05Z"
+
+    it "Testing isAheadOfCurrentDate" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt testIsAheadOfCurrentDate) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> result `shouldEqual` false
+
+    it "Testing isGivenDateAhead" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt testIsGivenDateAhead) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> result `shouldEqual` false
+        
+    it "Testing getCurrentDateStringWithOffset" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt (getCurrentDateStringWithOffset 10)) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> do
+          _ <- logShow result
+          pure unit
+
+    it "Testing getDateWithOffset" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt (getDateWithOffset "2019-07-16T12:07:40Z" 10)) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> result `shouldEqual` "2019-07-16 12:07:50"
+
+    it "Testing getCurrentDateInMillis" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt getCurrentDateInMillis) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> do
+          _ <- logShow result
+          pure unit
+
+    it "Testing currentDateWithOffset" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt (currentDateWithOffset 10)) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> do
+          _ <- logShow result
+          pure unit
+
+    it "Testing currentDateStringWithoutSpace" $ do
+      brt <- createRegularBackendRuntime
+      eResult <- liftAff $ runExceptT (runStateT (runReaderT (runBackend brt currentDateStringWithoutSpace) unit) unit)
+      case eResult of
+        Left err -> fail $ show err
+        Right (Tuple result _)  -> do
+          _ <- logShow result
+          pure unit

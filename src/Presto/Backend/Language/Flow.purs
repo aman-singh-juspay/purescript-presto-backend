@@ -23,7 +23,7 @@ module Presto.Backend.Flow where
 
 import Prelude
 
-import Cache.Types (EntryID(..), Item(..))
+import Cache.Types (EntryID, Item)
 import Control.Monad.Aff (Aff)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Exception (Error)
@@ -51,9 +51,10 @@ import Presto.Backend.Language.Types.KVDB (getKVDBName) as KVDB
 import Presto.Backend.Language.Types.UnitEx (UnitEx, fromUnitEx, toUnitEx)
 import Presto.Backend.Playback.Entries (CallAPIEntry, DoAffEntry, ForkFlowEntry, GetDBConnEntry, GetKVDBConnEntry, LogEntry, RunDBEntry, RunKVDBEitherEntry, RunKVDBSimpleEntry, RunSysCmdEntry, mkCallAPIEntry, mkDoAffEntry, mkForkFlowEntry, mkGetDBConnEntry, mkGetKVDBConnEntry, mkLogEntry, mkRunDBEntry, mkRunKVDBEitherEntry, mkRunKVDBSimpleEntry, mkRunSysCmdEntry) as Playback
 import Presto.Backend.Playback.Types (RRItemDict, mkEntryDict) as Playback
+import Presto.Backend.Runtime.Common (jsonStringify)
 import Presto.Backend.Types (BackendAff)
 import Presto.Backend.Types.API (class RestEndpoint, Headers, ErrorResponse, APIResult, makeRequest)
-import Presto.Backend.Runtime.Common (jsonStringify)
+import Presto.Backend.Types.Date (Date, _currentDateStringWithSecOffset, _currentDateStringWithoutSpace, _currentDateWithOffset, _dateStringWithDaysOffset, _dateWithCustomOffset, _getCurrentDate, _getCurrentDateMillis, _getDateWithOffset, _isAheadOfCurrentDate, _isGivenDateAhead)
 import Presto.Core.Types.Language.Interaction (Interaction)
 import Sequelize.Class (class Model)
 import Sequelize.Types (Conn, SEQUELIZE)
@@ -112,6 +113,10 @@ data BackendFlowCommands next st rt s
         (KVDB.KVDB s)
         (MockedKVDBConn -> KVDBMock.KVDBActionDict)
         (Playback.RRItemDict Playback.RunKVDBSimpleEntry s)
+        (s -> next)
+    
+    | GetDate
+        (forall eff. Eff eff s)
         (s -> next)
 
 type BackendFlowCommandsWrapper st rt s next = BackendFlowCommands next st rt s
@@ -572,3 +577,33 @@ setMessageHandler dbName f = do
       KVDBMock.mkKVDBActionDict
       (Playback.mkEntryDict $ Playback.mkRunKVDBSimpleEntry dbName "setMessageHandler" "")
       id
+
+getCurrentDate :: forall st rt. BackendFlow st rt Date
+getCurrentDate = wrap $ GetDate _getCurrentDate $ id
+
+getDateStringWithOffset :: forall st rt. Date -> Int -> BackendFlow st rt Date
+getDateStringWithOffset givenDate offset = wrap $ GetDate (_dateStringWithDaysOffset givenDate offset) $ id
+
+isAheadOfCurrentDate :: forall st rt. Date -> BackendFlow st rt Boolean
+isAheadOfCurrentDate date = wrap $ GetDate (_isAheadOfCurrentDate date) $ id
+
+isGivenDateAhead :: forall st rt. Date -> Date -> BackendFlow st rt Boolean
+isGivenDateAhead givenDate dateToCheckWith = wrap $ GetDate (_isGivenDateAhead givenDate dateToCheckWith) $ id
+
+getCurrentDateStringWithOffset :: forall st rt. Int -> BackendFlow st rt String
+getCurrentDateStringWithOffset sec =  wrap $ GetDate (_currentDateStringWithSecOffset sec) $ id
+
+getDateWithOffset :: forall st rt. String -> Int -> BackendFlow st rt String
+getDateWithOffset date offset =  wrap $ GetDate (_getDateWithOffset date offset) $ id
+
+getDateWithCustomOffset :: forall st rt. Date -> Int -> String -> BackendFlow st rt Date
+getDateWithCustomOffset givenDate offset offsetType =  wrap $ GetDate (_dateWithCustomOffset givenDate offset offsetType) $ id
+
+getCurrentDateInMillis :: forall st rt. BackendFlow st rt Number
+getCurrentDateInMillis =  wrap $ GetDate (_getCurrentDateMillis) $ id
+
+currentDateWithOffset :: forall st rt. Int -> BackendFlow st rt Date
+currentDateWithOffset currentDate = wrap $ GetDate (_currentDateWithOffset currentDate) $ id
+
+currentDateStringWithoutSpace :: forall st rt. BackendFlow st rt String
+currentDateStringWithoutSpace = wrap $ GetDate (_currentDateStringWithoutSpace) $ id
